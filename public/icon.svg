@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1" />
+      <stop offset="100%" stop-color="#4338ca" />
+    </linearGradient>
+    <linearGradient id="foldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#818cf8" />
+      <stop offset="100%" stop-color="#6366f1" />
+    </linearGradient>
+  </defs>
+  <!-- Background Rounded Rect -->
+  <rect width="512" height="512" rx="112" fill="#0f172a" />
+  <!-- Document Body -->
+  <path d="M128 96 C128 82.7 138.7 72 152 72 L296 72 L384 160 L384 416 C384 429.3 373.3 440 360 440 L152 440 C138.7 440 128 429.3 128 416 Z" fill="url(#grad)" />
+  <!-- Corner Fold -->
+  <path d="M296 72 L296 152 C296 156.4 299.6 160 304 160 L384 160 Z" fill="url(#foldGrad)" opacity="0.8" />
+  <!-- Stylized Pen / Edit Mark -->
+  <path d="M200 240 L312 240 M200 288 L312 288 M200 336 L272 336" stroke="#ffffff" stroke-width="20" stroke-linecap="round" />
+  <!-- Signature / Accent Curve -->
+  <path d="M184 380 Q 230 350, 276 380 T 368 360" fill="none" stroke="#38bdf8" stroke-width="16" stroke-linecap="round" />
+</svg>
