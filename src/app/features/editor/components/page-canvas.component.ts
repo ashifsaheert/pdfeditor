@@ -18,11 +18,15 @@ import { PdfLoaderService } from '../../../core/services/pdf-loader.service';
 import {
   Annotation,
   CoverAnnotation,
+  ExtractedTextItem,
   ImageAnnotation,
   PageMeta,
+  StandardFontFamily,
   TextAnnotation,
+  TextReplacementAnnotation,
   TransformHandle
 } from '../../../core/models/pdf-editor.models';
+import { IconComponent } from '../../../shared/components/icon.component';
 
 interface DragState {
   type: 'move' | 'resize' | 'rotate';
@@ -43,7 +47,7 @@ interface DragState {
 @Component({
   selector: 'app-page-canvas',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, IconComponent],
   template: `
     <div
       #viewport
@@ -60,6 +64,30 @@ interface DragState {
       >
         <!-- Canvas for PDF.js page rendering -->
         <canvas #pdfCanvas class="pdf-page-canvas"></canvas>
+
+        <!-- Interactive PDF Text Selection Layer (active in edit-text mode) -->
+        <div
+          *ngIf="state.activeTool() === 'edit-text'"
+          class="extracted-text-layer"
+          [style.width.px]="pageCssWidth"
+          [style.height.px]="pageCssHeight"
+        >
+          <div
+            *ngFor="let item of pageTextItems"
+            class="text-item-target"
+            [class.hovered]="hoveredTextId === item.id"
+            [style.left.px]="item.x * state.zoom()"
+            [style.top.px]="item.y * state.zoom()"
+            [style.width.px]="item.width * state.zoom()"
+            [style.height.px]="item.height * state.zoom()"
+            (pointerenter)="hoveredTextId = item.id"
+            (pointerleave)="hoveredTextId = null"
+            (click)="onTextItemClick($event, item)"
+            [title]="'Click to edit: &quot;' + item.str + '&quot;'"
+          >
+            <span class="text-target-hint">Edit</span>
+          </div>
+        </div>
 
         <!-- Loading spinner while page renders -->
         <div *ngIf="isRendering" class="canvas-loading-overlay">
@@ -145,6 +173,30 @@ interface DragState {
               </div>
             </ng-container>
 
+            <!-- 4. Text Replacement Annotation -->
+            <ng-container *ngIf="ann.type === 'text-replace'">
+              <!-- Visual cover background matching page surface -->
+              <div
+                class="replace-cover-bg"
+                [style.background-color]="asReplace(ann).backgroundColor"
+              ></div>
+
+              <!-- Replacement text overlay -->
+              <div
+                class="text-content text-replace-content"
+                [style.font-family]="getFontFamilyCss(asReplace(ann).fontFamily)"
+                [style.font-size.px]="asReplace(ann).fontSize * state.zoom()"
+                [style.color]="asReplace(ann).color"
+                [style.font-weight]="asReplace(ann).isBold ? 'bold' : 'normal'"
+                [style.font-style]="asReplace(ann).isItalic ? 'italic' : 'normal'"
+                [style.text-align]="asReplace(ann).align"
+                (dblclick)="openEditModalForAnnotation(asReplace(ann))"
+                title="Double click to edit replacement text"
+              >
+                {{ asReplace(ann).text }}
+              </div>
+            </ng-container>
+
             <!-- SELECTION TRANSFORM HANDLES (When Selected & Not Inline Editing) -->
             <div
               *ngIf="state.selectedAnnotationId() === ann.id && editingTextId !== ann.id"
@@ -192,6 +244,183 @@ interface DragState {
                 (pointerdown)="startHandleDrag($event, ann, 'br')"
               ></div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- INLINE TEXT REPLACEMENT DIALOG MODAL -->
+      <div
+        *ngIf="isReplacementDialogOpen"
+        class="replacement-modal-overlay"
+        (click)="closeReplacementDialog()"
+      >
+        <div
+          class="replacement-dialog"
+          (click)="$event.stopPropagation()"
+          (keydown.escape)="closeReplacementDialog()"
+        >
+          <div class="dialog-header">
+            <div class="dialog-title-wrap">
+              <app-icon name="edit-text" [size]="16"></app-icon>
+              <span class="dialog-title">Edit Existing PDF Text</span>
+            </div>
+            <button
+              type="button"
+              class="dialog-close-btn"
+              (click)="closeReplacementDialog()"
+              title="Cancel (Esc)"
+            >
+              <app-icon name="close" [size]="14"></app-icon>
+            </button>
+          </div>
+
+          <!-- Disclosure warning alert box -->
+          <div class="dialog-disclosure-alert">
+            <app-icon name="shield" [size]="14" customClass="alert-icon"></app-icon>
+            <span>
+              <strong>Visual Replacement:</strong> Covers original text with an opaque background and overlays the new text. Original text remains in the PDF stream and is not cryptographically sanitized.
+            </span>
+          </div>
+
+          <!-- Replacement Textarea -->
+          <div class="form-group">
+            <label class="form-label" for="replacementText">Replacement Text</label>
+            <textarea
+              id="replacementText"
+              class="dialog-textarea"
+              rows="3"
+              [(ngModel)]="replacementForm.text"
+              placeholder="Enter replacement text..."
+              (keydown.control.enter)="applyReplacement()"
+            ></textarea>
+          </div>
+
+          <!-- Typography Controls Grid -->
+          <div class="controls-grid">
+            <!-- Font Family -->
+            <div class="form-group">
+              <label class="form-label" for="dialogFontFamily">Font</label>
+              <select
+                id="dialogFontFamily"
+                class="dialog-select"
+                [(ngModel)]="replacementForm.fontFamily"
+              >
+                <option value="Helvetica">Helvetica / Arial</option>
+                <option value="TimesRoman">Times New Roman</option>
+                <option value="Courier">Courier / Monospace</option>
+              </select>
+            </div>
+
+            <!-- Font Size -->
+            <div class="form-group">
+              <label class="form-label" for="dialogFontSize">Size</label>
+              <input
+                id="dialogFontSize"
+                type="number"
+                min="6"
+                max="120"
+                class="dialog-number-input"
+                [(ngModel)]="replacementForm.fontSize"
+              />
+            </div>
+
+            <!-- Text Color -->
+            <div class="form-group">
+              <label class="form-label" for="dialogTextColor">Text Color</label>
+              <input
+                id="dialogTextColor"
+                type="color"
+                class="dialog-color-picker"
+                [(ngModel)]="replacementForm.color"
+              />
+            </div>
+
+            <!-- Background Cover Color -->
+            <div class="form-group">
+              <label class="form-label" for="dialogBgColor">Cover Background</label>
+              <div class="color-picker-wrap">
+                <input
+                  id="dialogBgColor"
+                  type="color"
+                  class="dialog-color-picker"
+                  [(ngModel)]="replacementForm.backgroundColor"
+                  title="Adjustable background cover color matching page surface"
+                />
+                <span class="color-hex">{{ replacementForm.backgroundColor }}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Style Toggles & Alignment -->
+          <div class="toggles-row">
+            <div class="btn-group-toggle">
+              <button
+                type="button"
+                class="btn-toggle-option"
+                [class.active]="replacementForm.isBold"
+                (click)="replacementForm.isBold = !replacementForm.isBold"
+                title="Bold"
+              >
+                <app-icon name="bold" [size]="14"></app-icon>
+              </button>
+              <button
+                type="button"
+                class="btn-toggle-option"
+                [class.active]="replacementForm.isItalic"
+                (click)="replacementForm.isItalic = !replacementForm.isItalic"
+                title="Italic"
+              >
+                <app-icon name="italic" [size]="14"></app-icon>
+              </button>
+            </div>
+
+            <div class="btn-group-toggle">
+              <button
+                type="button"
+                class="btn-toggle-option"
+                [class.active]="replacementForm.align === 'left'"
+                (click)="replacementForm.align = 'left'"
+                title="Align Left"
+              >
+                <app-icon name="align-left" [size]="14"></app-icon>
+              </button>
+              <button
+                type="button"
+                class="btn-toggle-option"
+                [class.active]="replacementForm.align === 'center'"
+                (click)="replacementForm.align = 'center'"
+                title="Align Center"
+              >
+                <app-icon name="align-center" [size]="14"></app-icon>
+              </button>
+              <button
+                type="button"
+                class="btn-toggle-option"
+                [class.active]="replacementForm.align === 'right'"
+                (click)="replacementForm.align = 'right'"
+                title="Align Right"
+              >
+                <app-icon name="align-right" [size]="14"></app-icon>
+              </button>
+            </div>
+          </div>
+
+          <!-- Dialog Actions -->
+          <div class="dialog-actions">
+            <button
+              type="button"
+              class="btn-dialog-secondary"
+              (click)="closeReplacementDialog()"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn-dialog-primary"
+              (click)="applyReplacement()"
+            >
+              Apply Replacement
+            </button>
           </div>
         </div>
       </div>
@@ -367,6 +596,284 @@ interface DragState {
     .handle-bl { bottom: -5px; left: -5px; cursor: nesw-resize; }
     .handle-bc { bottom: -5px; left: calc(50% - 4.5px); cursor: ns-resize; }
     .handle-br { bottom: -5px; right: -5px; cursor: nwse-resize; }
+
+    /* Interactive Extracted Text Layer for Edit Mode */
+    .extracted-text-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: auto;
+      z-index: 10;
+    }
+    .text-item-target {
+      position: absolute;
+      cursor: pointer;
+      box-sizing: border-box;
+      border: 1px dashed transparent;
+      border-radius: 2px;
+      transition: all 0.15s ease;
+      display: flex;
+      align-items: flex-start;
+      justify-content: flex-end;
+    }
+    .text-item-target:hover,
+    .text-item-target.hovered {
+      background: rgba(14, 165, 233, 0.15);
+      border-color: #0284c7;
+      outline: 1px solid rgba(2, 132, 199, 0.5);
+    }
+    .text-target-hint {
+      position: absolute;
+      top: -14px;
+      right: 0;
+      background: #0284c7;
+      color: #ffffff;
+      font-size: 0.625rem;
+      font-weight: 600;
+      padding: 0 0.25rem;
+      border-radius: 2px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s ease;
+      white-space: nowrap;
+    }
+    .text-item-target:hover .text-target-hint,
+    .text-item-target.hovered .text-target-hint {
+      opacity: 1;
+    }
+
+    /* Text Replacement Annotation */
+    .replace-cover-bg {
+      position: absolute;
+      inset: 0;
+      border-radius: 1px;
+      pointer-events: none;
+    }
+    .text-replace-content {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      height: 100%;
+      user-select: none;
+    }
+
+    /* Replacement Inline Modal Dialog */
+    .replacement-modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(3px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 1rem;
+    }
+    .replacement-dialog {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 0.75rem;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+      width: 100%;
+      max-width: 520px;
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      color: #f8fafc;
+      animation: dialogPop 0.15s ease-out;
+    }
+    @keyframes dialogPop {
+      from { opacity: 0; transform: scale(0.95); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    .dialog-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .dialog-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: #38bdf8;
+    }
+    .dialog-title {
+      font-size: 0.9375rem;
+      font-weight: 700;
+      color: #f8fafc;
+    }
+    .dialog-close-btn {
+      background: transparent;
+      border: none;
+      color: #94a3b8;
+      cursor: pointer;
+      padding: 0.25rem;
+      border-radius: 0.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .dialog-close-btn:hover {
+      background: #334155;
+      color: #ffffff;
+    }
+    .dialog-disclosure-alert {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
+      background: rgba(245, 158, 11, 0.12);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      color: #fbbf24;
+      padding: 0.6rem 0.75rem;
+      border-radius: 0.5rem;
+      font-size: 0.75rem;
+      line-height: 1.4;
+    }
+    .alert-icon {
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .form-label {
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: #94a3b8;
+    }
+    .dialog-textarea {
+      width: 100%;
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #f8fafc;
+      padding: 0.5rem 0.75rem;
+      border-radius: 0.375rem;
+      font-size: 0.875rem;
+      line-height: 1.4;
+      resize: vertical;
+      outline: none;
+      box-sizing: border-box;
+      font-family: inherit;
+    }
+    .dialog-textarea:focus {
+      border-color: #0284c7;
+    }
+    .controls-grid {
+      display: grid;
+      grid-template-columns: 1fr 70px 60px 1fr;
+      gap: 0.75rem;
+      align-items: flex-end;
+    }
+    .dialog-select {
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #f8fafc;
+      padding: 0.4rem 0.5rem;
+      border-radius: 0.375rem;
+      font-size: 0.78125rem;
+      outline: none;
+      width: 100%;
+    }
+    .dialog-number-input {
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #f8fafc;
+      padding: 0.4rem 0.5rem;
+      border-radius: 0.375rem;
+      font-size: 0.78125rem;
+      outline: none;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .dialog-color-picker {
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      border: 1px solid #475569;
+      border-radius: 0.375rem;
+      background: transparent;
+      cursor: pointer;
+    }
+    .color-picker-wrap {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .color-hex {
+      font-size: 0.75rem;
+      font-family: monospace;
+      color: #cbd5e1;
+    }
+    .toggles-row {
+      display: flex;
+      gap: 0.75rem;
+    }
+    .btn-group-toggle {
+      display: flex;
+      border: 1px solid #334155;
+      border-radius: 0.375rem;
+      overflow: hidden;
+      background: #0f172a;
+    }
+    .btn-toggle-option {
+      background: transparent;
+      border: none;
+      color: #94a3b8;
+      padding: 0.35rem 0.6rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-right: 1px solid #334155;
+    }
+    .btn-toggle-option:last-child {
+      border-right: none;
+    }
+    .btn-toggle-option:hover {
+      background: #1e293b;
+      color: #ffffff;
+    }
+    .btn-toggle-option.active {
+      background: #0284c7;
+      color: #ffffff;
+    }
+    .dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.75rem;
+      margin-top: 0.5rem;
+    }
+    .btn-dialog-secondary {
+      background: transparent;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+      padding: 0.45rem 0.9rem;
+      border-radius: 0.375rem;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .btn-dialog-secondary:hover {
+      background: #334155;
+      color: #ffffff;
+    }
+    .btn-dialog-primary {
+      background: #0284c7;
+      border: none;
+      color: #ffffff;
+      padding: 0.45rem 1rem;
+      border-radius: 0.375rem;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .btn-dialog-primary:hover {
+      background: #0369a1;
+    }
   `]
 })
 export class PageCanvasComponent implements OnChanges, OnDestroy {
@@ -385,6 +892,22 @@ export class PageCanvasComponent implements OnChanges, OnDestroy {
   pageCssHeight = 792;
   isRendering = false;
   editingTextId: string | null = null;
+
+  pageTextItems: ExtractedTextItem[] = [];
+  hoveredTextId: string | null = null;
+  isReplacementDialogOpen = false;
+  replacementTargetItem: ExtractedTextItem | null = null;
+  editingReplacementId: string | null = null;
+  replacementForm = {
+    text: '',
+    fontSize: 14,
+    fontFamily: 'Helvetica' as StandardFontFamily,
+    color: '#000000',
+    backgroundColor: '#ffffff',
+    align: 'left' as 'left' | 'center' | 'right',
+    isBold: false,
+    isItalic: false
+  };
 
   private currentRenderTask: any = null;
   private dragState: DragState | null = null;
@@ -436,6 +959,13 @@ export class PageCanvasComponent implements OnChanges, OnDestroy {
 
       this.pageCssWidth = res.cssWidth;
       this.pageCssHeight = res.cssHeight;
+
+      // Extract positioned text items from page
+      this.pageTextItems = await this.pdfLoader.extractPageTextItems(
+        page,
+        this.pageMeta,
+        this.coordinateService
+      );
     } catch (err: any) {
       if (err?.name !== 'RenderingCancelledException') {
         console.error('Failed to render PDF page:', err);
@@ -447,6 +977,10 @@ export class PageCanvasComponent implements OnChanges, OnDestroy {
 
   asText(ann: Annotation): TextAnnotation {
     return ann as TextAnnotation;
+  }
+
+  asReplace(ann: Annotation): TextReplacementAnnotation {
+    return ann as TextReplacementAnnotation;
   }
 
   asImage(ann: Annotation): ImageAnnotation {
@@ -475,12 +1009,142 @@ export class PageCanvasComponent implements OnChanges, OnDestroy {
     this.state.updateAnnotation(id, { text });
   }
 
+  onTextItemClick(event: MouseEvent, item: ExtractedTextItem): void {
+    event.stopPropagation();
+    this.openReplacementDialogForItem(item);
+  }
+
+  openReplacementDialogForItem(item: ExtractedTextItem): void {
+    if (!this.pageMeta) return;
+
+    // Check if there is already an existing replacement covering this item
+    const existingReplacement = this.state.annotations().find(
+      (a) =>
+        a.pageIndex === this.pageMeta!.pageIndex &&
+        a.type === 'text-replace' &&
+        Math.abs(a.x - item.x) < 8 &&
+        Math.abs(a.y - item.y) < 8
+    ) as TextReplacementAnnotation | undefined;
+
+    if (existingReplacement) {
+      this.openEditModalForAnnotation(existingReplacement);
+      return;
+    }
+
+    this.replacementTargetItem = item;
+    this.editingReplacementId = null;
+
+    // Auto-sample background color from canvas at this item's location
+    const canvas = this.pdfCanvasRef?.nativeElement || null;
+    const sampledBg = this.pdfLoader.sampleCanvasColorAt(
+      canvas,
+      item.x,
+      item.y,
+      this.state.zoom()
+    );
+
+    this.replacementForm = {
+      text: item.str,
+      fontSize: item.fontSize,
+      fontFamily: item.fontFamily,
+      color: '#000000',
+      backgroundColor: sampledBg,
+      align: 'left',
+      isBold: false,
+      isItalic: false
+    };
+
+    this.isReplacementDialogOpen = true;
+  }
+
+  openEditModalForAnnotation(ann: TextReplacementAnnotation): void {
+    this.editingReplacementId = ann.id;
+    this.replacementTargetItem = null;
+
+    this.replacementForm = {
+      text: ann.text,
+      fontSize: ann.fontSize,
+      fontFamily: ann.fontFamily,
+      color: ann.color,
+      backgroundColor: ann.backgroundColor || '#ffffff',
+      align: ann.align,
+      isBold: ann.isBold,
+      isItalic: ann.isItalic
+    };
+
+    this.isReplacementDialogOpen = true;
+  }
+
+  closeReplacementDialog(): void {
+    this.isReplacementDialogOpen = false;
+    this.replacementTargetItem = null;
+    this.editingReplacementId = null;
+  }
+
+  applyReplacement(): void {
+    if (!this.pageMeta) return;
+
+    const form = this.replacementForm;
+    if (this.editingReplacementId) {
+      // Update existing replacement annotation
+      this.state.updateAnnotation(this.editingReplacementId, {
+        text: form.text,
+        fontSize: form.fontSize,
+        fontFamily: form.fontFamily,
+        color: form.color,
+        backgroundColor: form.backgroundColor,
+        align: form.align,
+        isBold: form.isBold,
+        isItalic: form.isItalic
+      });
+      this.state.selectAnnotation(this.editingReplacementId);
+    } else if (this.replacementTargetItem) {
+      const item = this.replacementTargetItem;
+      const padX = 2;
+      const padY = 1;
+      const targetBounds = {
+        x: Math.max(0, item.x - padX),
+        y: Math.max(0, item.y - padY),
+        width: item.width + padX * 2,
+        height: item.height + padY * 2
+      };
+
+      const newReplacement: TextReplacementAnnotation = {
+        id: `replace-${Date.now()}`,
+        type: 'text-replace',
+        pageIndex: this.pageMeta.pageIndex,
+        x: targetBounds.x,
+        y: targetBounds.y,
+        width: targetBounds.width,
+        height: targetBounds.height,
+        rotation: 0,
+        opacity: 1,
+        zIndex: (Date.now() % 1000) + 10,
+        originalText: item.str,
+        text: form.text,
+        fontSize: form.fontSize,
+        fontFamily: form.fontFamily,
+        color: form.color,
+        backgroundColor: form.backgroundColor,
+        align: form.align,
+        isBold: form.isBold,
+        isItalic: form.isItalic,
+        targetBounds
+      };
+
+      this.state.addAnnotation(newReplacement);
+      this.state.selectAnnotation(newReplacement.id);
+    }
+
+    this.closeReplacementDialog();
+  }
+
   // Pointer & Click handling on Viewport / Background
   onViewportPointerDown(event: PointerEvent): void {
     if (event.target !== event.currentTarget) return;
 
     const tool = this.state.activeTool();
-    if (tool === 'select') {
+    if (tool === 'select' || tool === 'edit-text') {
       this.state.selectAnnotation(null);
       this.finishEditText();
       return;

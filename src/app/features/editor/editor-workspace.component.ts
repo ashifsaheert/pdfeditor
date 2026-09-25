@@ -194,6 +194,25 @@ export class EditorWorkspaceComponent {
       return;
     }
 
+    // Tool shortcuts (when not typing in an input)
+    if (event.key.toLowerCase() === 'e') {
+      event.preventDefault();
+      this.state.activeTool.set('edit-text');
+      this.state.selectAnnotation(null);
+      return;
+    }
+    if (event.key.toLowerCase() === 'v') {
+      event.preventDefault();
+      this.state.activeTool.set('select');
+      return;
+    }
+    if (event.key.toLowerCase() === 't') {
+      event.preventDefault();
+      this.state.activeTool.set('text');
+      this.state.selectAnnotation(null);
+      return;
+    }
+
     // Deselect with Escape
     if (event.key === 'Escape') {
       this.state.selectAnnotation(null);

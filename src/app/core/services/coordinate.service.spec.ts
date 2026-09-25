@@ -108,6 +108,85 @@ describe('CoordinateService', () => {
     });
   });
 
+  describe('mapPdfToVisualCoordinates and Inverse Symmetry', () => {
+    const W = 612;
+    const H = 792;
+    const testCases = [
+      { x: 72, y: 120, width: 200, height: 30, rotation: 0 },
+      { x: 150, y: 400, width: 320, height: 60, rotation: 0 },
+      { x: 0, y: 0, width: 100, height: 50, rotation: 0 }
+    ];
+
+    it('should be the exact inverse of mapAnnotationToPdfCoordinates for all rotations', () => {
+      const rotations = [0, 90, 180, 270, 360, -90];
+      rotations.forEach((rot) => {
+        testCases.forEach((ann) => {
+          const mappedToPdf = service.mapAnnotationToPdfCoordinates(ann, W, H, rot);
+          const mappedBack = service.mapPdfToVisualCoordinates(
+            mappedToPdf.x,
+            mappedToPdf.y,
+            mappedToPdf.width,
+            mappedToPdf.height,
+            W,
+            H,
+            rot
+          );
+          expect(mappedBack.x).toBeCloseTo(ann.x, 2);
+          expect(mappedBack.y).toBeCloseTo(ann.y, 2);
+          expect(mappedBack.width).toBeCloseTo(ann.width, 2);
+          expect(mappedBack.height).toBeCloseTo(ann.height, 2);
+        });
+      });
+    });
+
+    it('should map PDF baseline coordinates correctly in 0 degree orientation', () => {
+      // In 0 deg, bottom-left is origin
+      // An element at pdfX=100, pdfY=600 with width=150, height=20 in a 612x792 page
+      // visualY = 792 - 600 - 20 = 172
+      const vis = service.mapPdfToVisualCoordinates(100, 600, 150, 20, W, H, 0);
+      expect(vis.x).toBe(100);
+      expect(vis.y).toBe(172);
+      expect(vis.width).toBe(150);
+      expect(vis.height).toBe(20);
+    });
+
+    it('should map PDF baseline coordinates correctly in 90 degree orientation', () => {
+      const vis = service.mapPdfToVisualCoordinates(100, 250, 150, 20, W, H, 90);
+      // visualX = 250 - 150 = 100
+      // visualY = 100
+      expect(vis.x).toBe(100);
+      expect(vis.y).toBe(100);
+    });
+  });
+
+  describe('calculateVisualTextBounds', () => {
+    const W = 612;
+    const H = 792;
+
+    it('should calculate visual bounding box for horizontal unrotated text item', () => {
+      // transform: [fontSize, 0, 0, fontSize, tx, ty]
+      const transform = [16, 0, 0, 16, 72, 700];
+      const bounds = service.calculateVisualTextBounds(transform, 180, 16, W, H, 0);
+
+      expect(bounds.fontSize).toBe(16);
+      expect(bounds.x).toBe(72);
+      expect(bounds.width).toBeGreaterThanOrEqual(180);
+      // visualY should be close to H - 700 - ascent
+      expect(bounds.y).toBeCloseTo(792 - 700 - 16 * 0.78, 1);
+    });
+
+    it('should correctly position text bounding boxes under 90 degree page rotation', () => {
+      const transform = [14, 0, 0, 14, 50, 600];
+      const bounds0 = service.calculateVisualTextBounds(transform, 120, 14, W, H, 0);
+      const bounds90 = service.calculateVisualTextBounds(transform, 120, 14, W, H, 90);
+
+      expect(bounds0.width).toBeGreaterThan(0);
+      expect(bounds90.width).toBeGreaterThan(0);
+      // In 90 degree rotation, the orientation rotates clockwise
+      expect(bounds90.x).not.toBe(bounds0.x);
+    });
+  });
+
   describe('calculateFitZoom', () => {
     it('should calculate fit page zoom correctly', () => {
       // Page is 600x800, container is 1200x1000 with 40 padding -> available 1160x960

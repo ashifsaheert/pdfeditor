@@ -15,7 +15,8 @@ import {
   ImageAnnotation,
   PageMeta,
   StandardFontFamily,
-  TextAnnotation
+  TextAnnotation,
+  TextReplacementAnnotation
 } from '../models/pdf-editor.models';
 import { CoordinateService } from './coordinate.service';
 
@@ -135,6 +136,15 @@ export class PdfExportService {
             unrotatedHeight,
             totalRotation
           );
+        } else if (ann.type === 'text-replace') {
+          await this.renderTextReplacementAnnotation(
+            ann as TextReplacementAnnotation,
+            addedPage,
+            unrotatedWidth,
+            unrotatedHeight,
+            totalRotation,
+            getFont
+          );
         }
       }
     }
@@ -199,6 +209,65 @@ export class PdfExportService {
         size: ann.fontSize,
         font: font,
         color: color,
+        opacity: ann.opacity ?? 1.0,
+        rotate: degrees(transform.rotationDegrees)
+      });
+    });
+  }
+
+  private async renderTextReplacementAnnotation(
+    ann: TextReplacementAnnotation,
+    page: PDFPage,
+    unrotatedWidth: number,
+    unrotatedHeight: number,
+    totalRotation: number,
+    getFont: (family: StandardFontFamily, bold: boolean, italic: boolean) => Promise<PDFFont>
+  ): Promise<void> {
+    const transform = this.coordinateService.mapAnnotationToPdfCoordinates(
+      ann,
+      unrotatedWidth,
+      unrotatedHeight,
+      totalRotation
+    );
+
+    // 1. Draw the background cover rectangle to visually cover the original text
+    const bgColor = this.hexToRgb(ann.backgroundColor || '#ffffff');
+    page.drawRectangle({
+      x: transform.x,
+      y: transform.y,
+      width: transform.width,
+      height: transform.height,
+      color: bgColor,
+      opacity: ann.opacity ?? 1.0,
+      rotate: degrees(transform.rotationDegrees)
+    });
+
+    // 2. Draw the replacement text on top
+    const font = await getFont(ann.fontFamily, ann.isBold, ann.isItalic);
+    const textColor = this.hexToRgb(ann.color || '#000000');
+
+    const lines = (ann.text || '').split('\n');
+    const lineHeight = ann.fontSize * 1.25;
+
+    lines.forEach((line, index) => {
+      let xOffset = 0;
+      if (ann.align === 'center' || ann.align === 'right') {
+        const textWidth = font.widthOfTextAtSize(line, ann.fontSize);
+        if (ann.align === 'center') {
+          xOffset = Math.max(0, (ann.width - textWidth) / 2);
+        } else if (ann.align === 'right') {
+          xOffset = Math.max(0, ann.width - textWidth);
+        }
+      }
+
+      const lineYOffset = index * lineHeight;
+
+      page.drawText(line, {
+        x: transform.x + xOffset,
+        y: transform.y + transform.height - ann.fontSize - lineYOffset,
+        size: ann.fontSize,
+        font: font,
+        color: textColor,
         opacity: ann.opacity ?? 1.0,
         rotate: degrees(transform.rotationDegrees)
       });

@@ -1,12 +1,15 @@
 import { Injectable } from '@angular/core';
 import * as pdfjsLib from 'pdfjs-dist';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { ExtractedTextItem, PageMeta, StandardFontFamily } from '../models/pdf-editor.models';
+import { CoordinateService } from './coordinate.service';
 
 @Injectable({
   providedIn: 'root'
 })
 export class PdfLoaderService {
   private workerInitialized = false;
+  private textItemsCache = new Map<string, ExtractedTextItem[]>();
 
   constructor() {
     this.initWorker();
@@ -119,6 +122,118 @@ export class PdfLoaderService {
     return textContent.items
       .map((item: any) => item.str || '')
       .join(' ');
+  }
+
+  /**
+   * Extract positioned text items from a PDF page for interactive selection and replacement.
+   */
+  async extractPageTextItems(
+    page: pdfjsLib.PDFPageProxy,
+    pageMeta: PageMeta,
+    coordinateService: CoordinateService
+  ): Promise<ExtractedTextItem[]> {
+    const cacheKey = `${pageMeta.originalPageIndex}-${pageMeta.rotation}`;
+    if (this.textItemsCache.has(cacheKey)) {
+      return this.textItemsCache.get(cacheKey)!;
+    }
+
+    const textContent = await page.getTextContent();
+    const items: ExtractedTextItem[] = [];
+    const styles = textContent.styles || {};
+
+    let index = 0;
+    for (const item of textContent.items as any[]) {
+      if (!item.str || item.str.length === 0) continue;
+
+      const style = styles[item.fontName] || {};
+      const fontFamily = this.detectStandardFontFamily(style.fontFamily || item.fontName || '');
+
+      const bounds = coordinateService.calculateVisualTextBounds(
+        item.transform || [1, 0, 0, 1, 0, 0],
+        item.width || 0,
+        item.height || 0,
+        pageMeta.width,
+        pageMeta.height,
+        pageMeta.rotation
+      );
+
+      items.push({
+        id: `page-${pageMeta.pageIndex}-text-${index++}`,
+        pageIndex: pageMeta.pageIndex,
+        str: item.str,
+        dir: item.dir || 'ltr',
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height,
+        fontSize: bounds.fontSize,
+        fontFamily,
+        hasEOL: !!item.hasEOL,
+        transform: item.transform || [1, 0, 0, 1, 0, 0]
+      });
+    }
+
+    this.textItemsCache.set(cacheKey, items);
+    return items;
+  }
+
+  /**
+   * Clears cached text items (e.g. when document is closed or page rotated).
+   */
+  clearTextItemsCache(): void {
+    this.textItemsCache.clear();
+  }
+
+  /**
+   * Detects closest StandardFontFamily from font name or family string.
+   */
+  detectStandardFontFamily(fontName: string): StandardFontFamily {
+    const lower = fontName.toLowerCase();
+    if (lower.includes('times') || lower.includes('serif') || lower.includes('roman') || lower.includes('georgia')) {
+      return 'TimesRoman';
+    }
+    if (lower.includes('courier') || lower.includes('mono') || lower.includes('console') || lower.includes('typewriter')) {
+      return 'Courier';
+    }
+    return 'Helvetica';
+  }
+
+  /**
+   * Samples the background color around a text item from the rendered canvas.
+   * Allows the background cover color to automatically match the page closely,
+   * while the user can also manually adjust the color in the editor.
+   */
+  sampleCanvasColorAt(canvas: HTMLCanvasElement | null, visualX: number, visualY: number, zoom: number): string {
+    if (!canvas) return '#ffffff';
+    try {
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return '#ffffff';
+
+      const styleWidth = parseFloat(canvas.style.width || String(canvas.width));
+      const dpr = styleWidth > 0 ? canvas.width / styleWidth : 1;
+
+      // Sample a few pixels around the text (e.g. 2px above the top-left, or at the top edge)
+      const samplePoints = [
+        { x: visualX + 2, y: Math.max(0, visualY - 3) },
+        { x: visualX - 3, y: visualY + 2 },
+        { x: visualX + 4, y: visualY + 2 }
+      ];
+
+      for (const pt of samplePoints) {
+        const px = Math.floor(Math.max(0, Math.min(canvas.width - 1, pt.x * zoom * dpr)));
+        const py = Math.floor(Math.max(0, Math.min(canvas.height - 1, pt.y * zoom * dpr)));
+        const pixel = ctx.getImageData(px, py, 1, 1).data;
+        if (pixel[3] > 128) {
+          const brightness = (pixel[0] * 299 + pixel[1] * 587 + pixel[2] * 114) / 1000;
+          if (brightness > 40) {
+            return `#${pixel[0].toString(16).padStart(2, '0')}${pixel[1].toString(16).padStart(2, '0')}${pixel[2].toString(16).padStart(2, '0')}`;
+          }
+        }
+      }
+    } catch (err) {
+      // In case of security restrictions on canvas getImageData
+    }
+    return '#ffffff';
   }
 
   /**

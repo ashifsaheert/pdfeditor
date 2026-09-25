@@ -1,4 +1,4 @@
-export type AnnotationType = 'text' | 'image' | 'cover';
+export type AnnotationType = 'text' | 'image' | 'cover' | 'text-replace';
 
 export type StandardFontFamily = 'Helvetica' | 'TimesRoman' | 'Courier';
 
@@ -26,6 +26,20 @@ export interface TextAnnotation extends BaseAnnotation {
   align: 'left' | 'center' | 'right';
 }
 
+export interface TextReplacementAnnotation extends BaseAnnotation {
+  type: 'text-replace';
+  originalText: string;
+  text: string;
+  fontSize: number;    // PDF points
+  fontFamily: StandardFontFamily;
+  color: string;       // Hex color e.g. '#000000'
+  backgroundColor: string; // Hex color e.g. '#ffffff' to visually cover original text
+  isBold: boolean;
+  isItalic: boolean;
+  align: 'left' | 'center' | 'right';
+  targetBounds?: { x: number; y: number; width: number; height: number };
+}
+
 export interface ImageAnnotation extends BaseAnnotation {
   type: 'image';
   dataUrl: string;     // base64 data URL (PNG/JPEG)
@@ -41,7 +55,7 @@ export interface CoverAnnotation extends BaseAnnotation {
   borderWidth?: number;
 }
 
-export type Annotation = TextAnnotation | ImageAnnotation | CoverAnnotation;
+export type Annotation = TextAnnotation | ImageAnnotation | CoverAnnotation | TextReplacementAnnotation;
 
 export interface PageMeta {
   pageIndex: number;         // current index in the active pages array
@@ -55,7 +69,22 @@ export interface PageMeta {
   isDeleted?: boolean;
 }
 
-export type EditorTool = 'select' | 'text' | 'image' | 'signature' | 'cover' | 'hand';
+export type EditorTool = 'select' | 'text' | 'image' | 'signature' | 'cover' | 'hand' | 'edit-text';
+
+export interface ExtractedTextItem {
+  id: string;
+  pageIndex: number;
+  str: string;
+  dir: string;
+  x: number;      // visual unscaled PDF points
+  y: number;      // visual unscaled PDF points
+  width: number;  // visual unscaled PDF points
+  height: number; // visual unscaled PDF points
+  fontSize: number;
+  fontFamily: StandardFontFamily;
+  hasEOL: boolean;
+  transform: number[];
+}
 
 export type TransformHandle =
   | 'tl' | 'tc' | 'tr'

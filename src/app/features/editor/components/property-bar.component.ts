@@ -6,7 +6,8 @@ import {
   CoverAnnotation,
   ImageAnnotation,
   StandardFontFamily,
-  TextAnnotation
+  TextAnnotation,
+  TextReplacementAnnotation
 } from '../../../core/models/pdf-editor.models';
 import { IconComponent } from '../../../shared/components/icon.component';
 
@@ -22,16 +23,16 @@ import { IconComponent } from '../../../shared/components/icon.component';
 
       <div class="divider"></div>
 
-      <!-- TEXT PROPERTIES -->
-      <ng-container *ngIf="selected()?.type === 'text'">
+      <!-- TEXT & TEXT-REPLACEMENT PROPERTIES -->
+      <ng-container *ngIf="selected()?.type === 'text' || selected()?.type === 'text-replace'">
         <!-- Font Family -->
         <div class="prop-group">
           <label class="prop-label" for="fontFamilySelect">Font</label>
           <select
             id="fontFamilySelect"
             class="select-input"
-            [ngModel]="asText().fontFamily"
-            (ngModelChange)="updateTextProp('fontFamily', $event)"
+            [ngModel]="asAnyText().fontFamily"
+            (ngModelChange)="updateAnyTextProp('fontFamily', $event)"
           >
             <option value="Helvetica">Helvetica / Arial</option>
             <option value="TimesRoman">Times New Roman</option>
@@ -45,8 +46,8 @@ import { IconComponent } from '../../../shared/components/icon.component';
           <select
             id="fontSizeSelect"
             class="select-input size-select"
-            [ngModel]="asText().fontSize"
-            (ngModelChange)="updateTextProp('fontSize', +$event)"
+            [ngModel]="asAnyText().fontSize"
+            (ngModelChange)="updateAnyTextProp('fontSize', +$event)"
           >
             <option *ngFor="let s of fontSizes" [value]="s">{{ s }}pt</option>
           </select>
@@ -59,8 +60,22 @@ import { IconComponent } from '../../../shared/components/icon.component';
             id="textColorInput"
             type="color"
             class="color-input"
-            [ngModel]="asText().color"
-            (ngModelChange)="updateTextProp('color', $event)"
+            [ngModel]="asAnyText().color"
+            (ngModelChange)="updateAnyTextProp('color', $event)"
+            title="Text Color"
+          />
+        </div>
+
+        <!-- Background Cover Color for Text Replacement -->
+        <div class="prop-group color-group" *ngIf="selected()?.type === 'text-replace'">
+          <label class="prop-label" for="coverBgInput">Cover Fill</label>
+          <input
+            id="coverBgInput"
+            type="color"
+            class="color-input"
+            [ngModel]="asReplace().backgroundColor"
+            (ngModelChange)="updateReplaceProp('backgroundColor', $event)"
+            title="Adjust background cover fill color to match page background"
           />
         </div>
 
@@ -69,8 +84,8 @@ import { IconComponent } from '../../../shared/components/icon.component';
           <button
             type="button"
             class="btn-toggle"
-            [class.active]="asText().isBold"
-            (click)="updateTextProp('isBold', !asText().isBold)"
+            [class.active]="asAnyText().isBold"
+            (click)="updateAnyTextProp('isBold', !asAnyText().isBold)"
             title="Bold"
           >
             <app-icon name="bold" [size]="14"></app-icon>
@@ -78,8 +93,8 @@ import { IconComponent } from '../../../shared/components/icon.component';
           <button
             type="button"
             class="btn-toggle"
-            [class.active]="asText().isItalic"
-            (click)="updateTextProp('isItalic', !asText().isItalic)"
+            [class.active]="asAnyText().isItalic"
+            (click)="updateAnyTextProp('isItalic', !asAnyText().isItalic)"
             title="Italic"
           >
             <app-icon name="italic" [size]="14"></app-icon>
@@ -91,8 +106,8 @@ import { IconComponent } from '../../../shared/components/icon.component';
           <button
             type="button"
             class="btn-toggle"
-            [class.active]="asText().align === 'left'"
-            (click)="updateTextProp('align', 'left')"
+            [class.active]="asAnyText().align === 'left'"
+            (click)="updateAnyTextProp('align', 'left')"
             title="Align Left"
           >
             <app-icon name="align-left" [size]="14"></app-icon>
@@ -100,8 +115,8 @@ import { IconComponent } from '../../../shared/components/icon.component';
           <button
             type="button"
             class="btn-toggle"
-            [class.active]="asText().align === 'center'"
-            (click)="updateTextProp('align', 'center')"
+            [class.active]="asAnyText().align === 'center'"
+            (click)="updateAnyTextProp('align', 'center')"
             title="Align Center"
           >
             <app-icon name="align-center" [size]="14"></app-icon>
@@ -109,12 +124,22 @@ import { IconComponent } from '../../../shared/components/icon.component';
           <button
             type="button"
             class="btn-toggle"
-            [class.active]="asText().align === 'right'"
-            (click)="updateTextProp('align', 'right')"
+            [class.active]="asAnyText().align === 'right'"
+            (click)="updateAnyTextProp('align', 'right')"
             title="Align Right"
           >
             <app-icon name="align-right" [size]="14"></app-icon>
           </button>
+        </div>
+
+        <!-- Disclosure Badge for Replacement -->
+        <div
+          *ngIf="selected()?.type === 'text-replace'"
+          class="redaction-warning-badge"
+          title="Visual overlay replacement: original text remains in underlying PDF stream and could be recoverable. Not secure redaction."
+        >
+          <span class="warning-dot"></span>
+          <span>Visual Replacement (Covers Original)</span>
         </div>
       </ng-container>
 
@@ -281,6 +306,11 @@ import { IconComponent } from '../../../shared/components/icon.component';
       color: #fbbf24;
       border: 1px solid rgba(245, 158, 11, 0.3);
     }
+    .badge-replace {
+      background: rgba(2, 132, 199, 0.15);
+      color: #38bdf8;
+      border: 1px solid rgba(2, 132, 199, 0.3);
+    }
     .divider {
       width: 1px;
       height: 20px;
@@ -425,6 +455,7 @@ export class PropertyBarComponent {
     const sel = this.selected();
     if (!sel) return '';
     if (sel.type === 'text') return 'Text';
+    if (sel.type === 'text-replace') return 'Text Replacement';
     if (sel.type === 'image') {
       return (sel as ImageAnnotation).isSignature ? 'Signature' : 'Image';
     }
@@ -435,12 +466,21 @@ export class PropertyBarComponent {
     const sel = this.selected();
     if (!sel) return '';
     if (sel.type === 'text') return 'badge-text';
+    if (sel.type === 'text-replace') return 'badge-replace';
     if (sel.type === 'image') return 'badge-image';
     return 'badge-cover';
   }
 
   asText(): TextAnnotation {
     return this.selected() as TextAnnotation;
+  }
+
+  asReplace(): TextReplacementAnnotation {
+    return this.selected() as TextReplacementAnnotation;
+  }
+
+  asAnyText(): TextAnnotation | TextReplacementAnnotation {
+    return this.selected() as (TextAnnotation | TextReplacementAnnotation);
   }
 
   asImage(): ImageAnnotation {
@@ -454,6 +494,18 @@ export class PropertyBarComponent {
   updateTextProp(prop: keyof TextAnnotation, value: any): void {
     const sel = this.selected();
     if (!sel || sel.type !== 'text') return;
+    this.state.updateAnnotation(sel.id, { [prop]: value });
+  }
+
+  updateReplaceProp(prop: keyof TextReplacementAnnotation, value: any): void {
+    const sel = this.selected();
+    if (!sel || sel.type !== 'text-replace') return;
+    this.state.updateAnnotation(sel.id, { [prop]: value });
+  }
+
+  updateAnyTextProp(prop: string, value: any): void {
+    const sel = this.selected();
+    if (!sel || (sel.type !== 'text' && sel.type !== 'text-replace')) return;
     this.state.updateAnnotation(sel.id, { [prop]: value });
   }
 

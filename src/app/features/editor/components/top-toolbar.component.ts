@@ -71,6 +71,17 @@ import { IconComponent } from '../../../shared/components/icon.component';
 
           <button
             type="button"
+            class="tool-btn edit-text-btn"
+            [class.active]="state.activeTool() === 'edit-text'"
+            (click)="setTool('edit-text')"
+            title="Select & Edit Existing PDF Text (E)"
+          >
+            <app-icon name="edit-text" [size]="15"></app-icon>
+            <span class="tool-label">Edit Text</span>
+          </button>
+
+          <button
+            type="button"
             class="tool-btn"
             [class.active]="state.activeTool() === 'text'"
             (click)="setTool('text')"
@@ -348,6 +359,10 @@ import { IconComponent } from '../../../shared/components/icon.component';
     }
     .tool-btn.active {
       background: #4f46e5;
+      color: #ffffff;
+    }
+    .tool-btn.edit-text-btn.active {
+      background: #0284c7;
       color: #ffffff;
     }
     .tool-btn.cover-btn.active {
